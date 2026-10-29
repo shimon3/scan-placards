@@ -16,7 +16,7 @@
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--display);overflow:hidden}
 video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
 .shade{position:fixed;inset:0;pointer-events:none}
-.frame{position:absolute;left:50%;top:42%;width:min(82vw,420px);height:min(34vw,170px);transform:translate(-50%,-50%);
+.frame{position:absolute;left:50%;top:42%;width:min(86vw,440px);height:min(56vw,280px);transform:translate(-50%,-50%);
   box-shadow:0 0 0 100vmax rgb(0 0 0 / .55);border-radius:10px}
 .frame::before{content:"";position:absolute;inset:-3px;border:3px solid var(--label);border-radius:12px}
 .laser{position:absolute;left:6%;right:6%;top:50%;height:2px;background:var(--err);box-shadow:0 0 12px var(--err);animation:l 1.6s ease-in-out infinite alternate}
@@ -44,6 +44,8 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
 .start h2 span{background:var(--label);color:var(--label-ink);padding:2px 8px}
 .start p{color:var(--muted);max-width:34ch;margin:0;line-height:1.5}
 .err{color:var(--err)}
+.zoom{display:flex;align-items:center;gap:10px;width:min(100%,360px);font-family:var(--mono);font-size:13px;color:var(--muted)}
+.zoom input{flex:1;accent-color:var(--label)}
 </style>
 </head>
 <body>
@@ -56,7 +58,8 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
 </div>
 
 <div class="bottom">
-  <div class="msg" id="msg">Vise le code-barres dans le cadre.</div>
+  <div class="msg" id="msg">Tiens le téléphone à 20 cm environ et vise le code-barres. Utilise le zoom si le code est petit.</div>
+  <div class="zoom" id="zoomBox" hidden><span>Zoom</span><input id="zoom" type="range" aria-label="Zoom"><span id="zoomVal">1×</span></div>
   <div class="code" id="code" hidden></div>
   <div class="row" id="actions" hidden>
     <button class="big" id="send" type="button">Ajouter à l'inventaire</button>
@@ -70,7 +73,7 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
   <p>Pointe la caméra sur une étiquette : le code-barres est repéré tout seul, bip, et il part dans ton inventaire.</p>
   <button class="big" id="go" type="button">Démarrer la caméra</button>
   <p id="startErr" class="err" hidden></p>
-  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 3</p>
+  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 4</p>
 </div>
 
 <script>
@@ -78,7 +81,7 @@ const INVENTAIRE="https://claude.ai/artifact/C1f1r5pMxut8VdB6yaZ279";
 const AUTO_SEND=true;           // après le bip, ouvre directement l'inventaire
 const $=id=>document.getElementById(id);
 const v=$("v");
-let stream=null, track=null, detector=null, zx=null, running=false, last="", hits=0, current="", actx=null, timer=null;
+let flip=false, stream=null, track=null, detector=null, zx=null, running=false, last="", hits=0, current="", actx=null, timer=null;
 
 function hex(s){return [...new TextEncoder().encode(s)].map(b=>b.toString(16).padStart(2,"0")).join("")}
 function beep(){
@@ -97,7 +100,7 @@ function sendUrl(code){
 function frameRect(){
   const fr=$("frame").getBoundingClientRect(), vw=v.videoWidth, vh=v.videoHeight;
   const s=Math.max(innerWidth/vw,innerHeight/vh), ox=(vw*s-innerWidth)/2, oy=(vh*s-innerHeight)/2;
-  const m=0.25; // marge autour du cadre
+  const m=0.15; // marge autour du cadre
   const x=(fr.left+ox)/s-fr.width/s*m, y=(fr.top+oy)/s-fr.height/s*m;
   return {x:Math.max(0,x),y:Math.max(0,y),w:Math.min(vw,fr.width/s*(1+2*m)),h:Math.min(vh,fr.height/s*(1+2*m))};
 }
@@ -106,7 +109,8 @@ const cv=document.createElement("canvas"), cx=cv.getContext("2d",{willReadFreque
 async function tick(){
   if(!running)return;
   if(v.readyState>=2&&v.videoWidth){
-    const r=frameRect(); cv.width=Math.round(r.w); cv.height=Math.round(r.h);
+    flip=!flip;
+    const r=flip?frameRect():{x:0,y:0,w:v.videoWidth,h:v.videoHeight}; cv.width=Math.round(r.w); cv.height=Math.round(r.h);
     cx.drawImage(v,r.x,r.y,r.w,r.h,0,0,cv.width,cv.height);
     let val="";
     try{
@@ -142,7 +146,7 @@ async function startInner(){
   if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){showErr("La caméra n'est pas accessible ici. Ouvre l'adresse https://… directement dans Chrome (pas dans une autre app).");return}
   try{actx??=new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch{}
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:2560},height:{ideal:1440}},audio:false});
   }catch(e){
     $("startErr").textContent=e.name==="NotAllowedError"?"Accès à la caméra refusé. Autorise la caméra pour ce site dans les réglages du navigateur (cadenas à gauche de l'adresse), puis réessaie.":"Impossible d'ouvrir la caméra ("+e.name+"). Ouvre cette page dans Chrome.";
     $("startErr").hidden=false;$("go").disabled=false;$("go").textContent="Réessayer";return;
@@ -151,6 +155,12 @@ async function startInner(){
   track=stream.getVideoTracks()[0];
   try{const caps=track.getCapabilities?.()||{};
     if(caps.torch)$("torch").hidden=false;
+    if(caps.zoom&&caps.zoom.max>caps.zoom.min){
+      const z=$("zoom");z.min=caps.zoom.min;z.max=Math.min(caps.zoom.max,8);z.step=caps.zoom.step||0.1;
+      const start=Math.min(2,+z.max);z.value=start;$("zoomBox").hidden=false;
+      const setZ=async val=>{try{await track.applyConstraints({advanced:[{zoom:+val}]});$("zoomVal").textContent=(+val).toFixed(1)+"×"}catch{}};
+      setZ(start);z.addEventListener("input",()=>setZ(z.value));
+    }
     if(caps.focusMode?.includes("continuous"))await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
   }catch{}
   if("BarcodeDetector" in window){try{detector=new BarcodeDetector()}catch{detector=null}}
