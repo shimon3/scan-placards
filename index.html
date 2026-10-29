@@ -54,11 +54,11 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
 
 <div class="top">
   <h1><span>Scan</span> placards</h1>
-  <button id="torch" type="button" hidden>Lampe</button>
+  <div class="row"><button id="cam" type="button" hidden>Caméra</button><button id="torch" type="button" hidden>Lampe</button></div>
 </div>
 
 <div class="bottom">
-  <div class="msg" id="msg">Tiens le téléphone à 20 cm environ et vise le code-barres. Utilise le zoom si le code est petit.</div>
+  <div class="msg" id="msg">Tiens le téléphone à 20 cm environ et vise le code-barres. Si l'image est floue, touche-la ou appuie sur « Caméra » pour changer d'objectif.</div>
   <div class="zoom" id="zoomBox" hidden><span>Zoom</span><input id="zoom" type="range" aria-label="Zoom"><span id="zoomVal">1×</span></div>
   <div class="code" id="code" hidden></div>
   <div class="row" id="actions" hidden>
@@ -73,7 +73,7 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
   <p>Pointe la caméra sur une étiquette : le code-barres est repéré tout seul, bip, et il part dans ton inventaire.</p>
   <button class="big" id="go" type="button">Démarrer la caméra</button>
   <p id="startErr" class="err" hidden></p>
-  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 4</p>
+  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 5</p>
 </div>
 
 <script>
@@ -81,7 +81,7 @@ const INVENTAIRE="https://claude.ai/artifact/C1f1r5pMxut8VdB6yaZ279";
 const AUTO_SEND=true;           // après le bip, ouvre directement l'inventaire
 const $=id=>document.getElementById(id);
 const v=$("v");
-let flip=false, stream=null, track=null, detector=null, zx=null, running=false, last="", hits=0, current="", actx=null, timer=null;
+let torchOn=false, flip=false, stream=null, track=null, detector=null, zx=null, running=false, last="", hits=0, current="", actx=null, timer=null;
 
 function hex(s){return [...new TextEncoder().encode(s)].map(b=>b.toString(16).padStart(2,"0")).join("")}
 function beep(){
@@ -139,38 +139,77 @@ function resume(){
 $("send").onclick=()=>{location.href=sendUrl(current)};
 $("again").onclick=resume;
 
+let backCams=[];
+function lsGet(k){try{return localStorage.getItem(k)}catch{return null}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch{}}
+async function openCam(deviceId){
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  const base={width:{ideal:2560},height:{ideal:1440}};
+  try{stream=await navigator.mediaDevices.getUserMedia({video:deviceId?{...base,deviceId:{exact:deviceId}}:{...base,facingMode:{ideal:"environment"}},audio:false})}
+  catch(e){if(!deviceId)throw e;stream=await navigator.mediaDevices.getUserMedia({video:{...base,facingMode:{ideal:"environment"}},audio:false})}
+  v.srcObject=stream;v.play().catch(()=>{});
+  track=stream.getVideoTracks()[0];torchOn=false;$("torch").textContent="Lampe";
+  setupTrack();
+}
+function setupTrack(){
+  try{const caps=track.getCapabilities?.()||{};
+    $("torch").hidden=!caps.torch;
+    const z=$("zoom");
+    if(caps.zoom&&caps.zoom.max>caps.zoom.min){
+      z.min=caps.zoom.min;z.max=Math.min(caps.zoom.max,8);z.step=caps.zoom.step||0.1;
+      const st=Math.min(2,+z.max);z.value=st;$("zoomBox").hidden=false;
+      const setZ=async val=>{try{await track.applyConstraints({advanced:[{zoom:+val}]});$("zoomVal").textContent=(+val).toFixed(1)+"×"}catch{}};
+      setZ(st);z.oninput=()=>setZ(z.value);
+    }else $("zoomBox").hidden=true;
+    if(caps.focusMode?.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{});
+  }catch{}
+}
+function updateCamLabel(){const id=track?.getSettings?.().deviceId;const i=backCams.findIndex(d=>d.deviceId===id);$("cam").textContent="Caméra "+(i+1)+"/"+backCams.length}
+async function nextCam(){
+  if(backCams.length<2)return;
+  const id=track?.getSettings?.().deviceId;const i=backCams.findIndex(d=>d.deviceId===id);
+  const n=backCams[(i+1)%backCams.length];
+  try{await openCam(n.deviceId);lsSet("camId",n.deviceId);updateCamLabel()}catch{}
+}
+/* toucher l'image = refaire la mise au point */
+v.addEventListener("click",async()=>{
+  try{const c=track.getCapabilities?.()||{};
+    if(c.focusMode?.includes("single-shot")){await track.applyConstraints({advanced:[{focusMode:"single-shot"}]});
+      setTimeout(()=>{if(c.focusMode.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{})},1500)}
+  }catch{}
+});
 async function start(){try{await startInner()}catch(e){showErr("Erreur au démarrage : "+(e&&(e.name||e.message)||e))}}
 function showErr(t){$("startErr").textContent=t;$("startErr").hidden=false;$("go").disabled=false;$("go").textContent="Réessayer"}
 async function startInner(){
   $("startErr").hidden=true;$("go").disabled=true;$("go").textContent="Ouverture de la caméra…";
   if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){showErr("La caméra n'est pas accessible ici. Ouvre l'adresse https://… directement dans Chrome (pas dans une autre app).");return}
   try{actx??=new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch{}
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:2560},height:{ideal:1440}},audio:false});
-  }catch(e){
+  try{ await openCam(lsGet("camId")||null); }
+  catch(e){
     $("startErr").textContent=e.name==="NotAllowedError"?"Accès à la caméra refusé. Autorise la caméra pour ce site dans les réglages du navigateur (cadenas à gauche de l'adresse), puis réessaie.":"Impossible d'ouvrir la caméra ("+e.name+"). Ouvre cette page dans Chrome.";
     $("startErr").hidden=false;$("go").disabled=false;$("go").textContent="Réessayer";return;
   }
-  v.srcObject=stream;v.play().catch(()=>{});
-  track=stream.getVideoTracks()[0];
-  try{const caps=track.getCapabilities?.()||{};
-    if(caps.torch)$("torch").hidden=false;
-    if(caps.zoom&&caps.zoom.max>caps.zoom.min){
-      const z=$("zoom");z.min=caps.zoom.min;z.max=Math.min(caps.zoom.max,8);z.step=caps.zoom.step||0.1;
-      const start=Math.min(2,+z.max);z.value=start;$("zoomBox").hidden=false;
-      const setZ=async val=>{try{await track.applyConstraints({advanced:[{zoom:+val}]});$("zoomVal").textContent=(+val).toFixed(1)+"×"}catch{}};
-      setZ(start);z.addEventListener("input",()=>setZ(z.value));
+  /* Sur beaucoup d'Android, la caméra arrière choisie par défaut est le grand-angle, sans mise au point de près.
+     On liste les caméras arrière et on prend la principale (souvent « camera 0 »). */
+  try{
+    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+    const back=devs.filter(d=>/back|arri|rear|environment/i.test(d.label));
+    backCams=back.length?back:devs;
+    const curId=track.getSettings?.().deviceId;
+    if(!lsGet("camId")){
+      const main=backCams.find(d=>/\b0\b/.test(d.label));
+      if(main&&main.deviceId!==curId)await openCam(main.deviceId);
     }
-    if(caps.focusMode?.includes("continuous"))await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
+    if(backCams.length>1){$("cam").hidden=false;updateCamLabel()}
   }catch{}
   if("BarcodeDetector" in window){try{detector=new BarcodeDetector()}catch{detector=null}}
   if(!detector&&window.ZXing){const h=new Map();h.set(ZXing.DecodeHintType.TRY_HARDER,true);zx=new ZXing.MultiFormatReader();zx.setHints(h)}
   if(!detector&&!zx){$("start").hidden=true;$("msg").textContent="Ce navigateur ne sait pas lire les codes-barres. Ouvre la page dans Chrome.";return}
   $("start").hidden=true;running=true;tick();
 }
-let torchOn=false;
 $("torch").onclick=async()=>{try{torchOn=!torchOn;await track.applyConstraints({advanced:[{torch:torchOn}]});$("torch").textContent=torchOn?"Lampe : on":"Lampe"}catch{}};
 $("go").onclick=start;
+$("cam").onclick=nextCam;
 document.addEventListener("visibilitychange",()=>{if(document.hidden){running=false;clearTimeout(timer)}else if(stream&&$("start").hidden&&$("actions").hidden){running=true;tick()}});
 window.addEventListener("pageshow",e=>{if(e.persisted&&stream)resume()});
 </script>
