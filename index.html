@@ -61,6 +61,7 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
   <div class="msg" id="msg">Tiens le téléphone à 20 cm environ et vise le code-barres. Si l'image est floue, touche-la ou appuie sur « Caméra » pour changer d'objectif.</div>
   <div class="zoom" id="zoomBox" hidden><span>Zoom</span><input id="zoom" type="range" aria-label="Zoom"><span id="zoomVal">1×</span></div>
   <div class="code" id="code" hidden></div>
+  <div id="diag" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></div>
   <div class="row" id="actions" hidden>
     <button class="big" id="send" type="button">Ajouter à l'inventaire</button>
     <button id="again" type="button">Rescanner</button>
@@ -73,7 +74,7 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
   <p>Pointe la caméra sur une étiquette : le code-barres est repéré tout seul, bip, et il part dans ton inventaire.</p>
   <button class="big" id="go" type="button">Démarrer la caméra</button>
   <p id="startErr" class="err" hidden></p>
-  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 5</p>
+  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 6</p>
 </div>
 
 <script>
@@ -106,24 +107,34 @@ function frameRect(){
 }
 const cv=document.createElement("canvas"), cx=cv.getContext("2d",{willReadFrequently:true});
 
+let nTry=0, lastErr="", via="";
+const zcv=document.createElement("canvas"), zcx=zcv.getContext("2d",{willReadFrequently:true});
+function zxRead(src){
+  // ZXing sur une copie réduite à 1400 px max de large
+  const k=Math.min(1,1400/src.width);zcv.width=Math.round(src.width*k);zcv.height=Math.round(src.height*k);
+  zcx.drawImage(src,0,0,zcv.width,zcv.height);
+  try{const lum=new ZXing.HTMLCanvasElementLuminanceSource(zcv);
+    return zx.decodeWithState(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum))).getText()}
+  catch(e){if(!(e&&/NotFound|Checksum|Format/.test(e.name||e.constructor?.name||"")))lastErr="zxing "+(e?.name||e);return ""}
+}
 async function tick(){
   if(!running)return;
   if(v.readyState>=2&&v.videoWidth){
-    flip=!flip;
+    nTry++;flip=!flip;
     const r=flip?frameRect():{x:0,y:0,w:v.videoWidth,h:v.videoHeight}; cv.width=Math.round(r.w); cv.height=Math.round(r.h);
     cx.drawImage(v,r.x,r.y,r.w,r.h,0,0,cv.width,cv.height);
     let val="";
-    try{
-      if(detector){const res=await detector.detect(cv);
+    if(detector){try{const res=await detector.detect(cv);
         if(res.length){const c=cv.width/2,cy=cv.height/2;
           res.sort((a,b)=>Math.hypot(a.boundingBox.x+a.boundingBox.width/2-c,a.boundingBox.y+a.boundingBox.height/2-cy)-Math.hypot(b.boundingBox.x+b.boundingBox.width/2-c,b.boundingBox.y+b.boundingBox.height/2-cy));
-          val=res[0].rawValue}}
-      else if(zx){const lum=new ZXing.HTMLCanvasElementLuminanceSource(cv);const bmp=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));val=zx.decode(bmp).getText()}
-    }catch{}
+          val=res[0].rawValue;via="natif"}}
+      catch(e){lastErr="natif "+(e?.name||e)}}
+    if(!val&&zx&&flip&&(!detector||nTry%3===1)){val=zxRead(cv);if(val)via="zxing"}
+    if(nTry%10===0)$("diag").textContent=`${detector?"natif":"—"}${zx?"+zxing":""} · ${v.videoWidth}×${v.videoHeight} · ${nTry} essais${lastErr?" · "+lastErr:""}`;
     if(val){ if(val===last)hits++; else {last=val;hits=1}
       if(hits>=2){found(val);return} }
   }
-  timer=setTimeout(tick,detector?90:160);
+  timer=setTimeout(tick,detector?80:150);
 }
 function found(val){
   running=false;current=val;beep();
@@ -202,8 +213,10 @@ async function startInner(){
     }
     if(backCams.length>1){$("cam").hidden=false;updateCamLabel()}
   }catch{}
-  if("BarcodeDetector" in window){try{detector=new BarcodeDetector()}catch{detector=null}}
-  if(!detector&&window.ZXing){const h=new Map();h.set(ZXing.DecodeHintType.TRY_HARDER,true);zx=new ZXing.MultiFormatReader();zx.setHints(h)}
+  if("BarcodeDetector" in window){try{const f=await BarcodeDetector.getSupportedFormats();detector=f&&f.length?new BarcodeDetector({formats:f}):null}catch{detector=null}}
+  if(window.ZXing){try{const h=new Map();h.set(ZXing.DecodeHintType.TRY_HARDER,true);
+    const F=ZXing.BarcodeFormat;h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[F.CODE_128,F.CODE_39,F.CODE_93,F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.ITF,F.CODABAR,F.QR_CODE,F.DATA_MATRIX]);
+    zx=new ZXing.MultiFormatReader();zx.setHints(h)}catch{zx=null}}
   if(!detector&&!zx){$("start").hidden=true;$("msg").textContent="Ce navigateur ne sait pas lire les codes-barres. Ouvre la page dans Chrome.";return}
   $("start").hidden=true;running=true;tick();
 }
