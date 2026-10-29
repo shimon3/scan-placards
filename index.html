@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111417">
+<title>Scanner placards</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+/* Écran de visée plein écran : vidéo, cadre de visée au centre, résultat en bas */
+:root{--bg:#111417;--ink:#eef1f3;--muted:#9aa4ad;--label:#f2b632;--label-ink:#1d1606;--ok:#4cc27a;--err:#f0857d;
+  --display:"Archivo",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--display);overflow:hidden}
+video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+.shade{position:fixed;inset:0;pointer-events:none}
+.frame{position:absolute;left:50%;top:42%;width:min(82vw,420px);height:min(34vw,170px);transform:translate(-50%,-50%);
+  box-shadow:0 0 0 100vmax rgb(0 0 0 / .55);border-radius:10px}
+.frame::before{content:"";position:absolute;inset:-3px;border:3px solid var(--label);border-radius:12px}
+.laser{position:absolute;left:6%;right:6%;top:50%;height:2px;background:var(--err);box-shadow:0 0 12px var(--err);animation:l 1.6s ease-in-out infinite alternate}
+@keyframes l{from{top:18%}to{top:82%}}
+@media (prefers-reduced-motion:reduce){.laser{animation:none}}
+.frame.hit{animation:flash .35s}
+.frame.hit .laser{background:var(--ok);box-shadow:0 0 14px var(--ok)}
+@keyframes flash{0%{box-shadow:0 0 0 100vmax rgb(76 194 122 / .45)}100%{box-shadow:0 0 0 100vmax rgb(0 0 0 / .55)}}
+.top{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:calc(12px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px))}
+h1{margin:0;font-stretch:72%;font-weight:800;font-size:20px;text-transform:uppercase;letter-spacing:.02em}
+h1 span{background:var(--label);color:var(--label-ink);padding:1px 6px}
+button,a.btn{font:inherit;font-weight:700;border:1px solid rgb(255 255 255 / .25);background:rgb(17 20 23 / .7);color:var(--ink);
+  border-radius:999px;padding:10px 16px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:8px}
+button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-offset:2px}
+.bottom{position:fixed;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;
+  padding:16px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+  background:linear-gradient(transparent,rgb(0 0 0 / .8) 30%)}
+.msg{font-size:15px;color:var(--muted);max-width:34ch}
+.code{font-family:var(--mono);font-size:20px;color:var(--ink);overflow-wrap:anywhere;max-width:100%}
+.big{background:var(--label);color:var(--label-ink);border:none;font-stretch:80%;font-weight:800;font-size:19px;text-transform:uppercase;padding:15px 26px}
+.row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;background:var(--bg);z-index:3}
+.start h2{margin:0;font-stretch:72%;font-weight:800;font-size:34px;text-transform:uppercase;line-height:1}
+.start h2 span{background:var(--label);color:var(--label-ink);padding:2px 8px}
+.start p{color:var(--muted);max-width:34ch;margin:0;line-height:1.5}
+.err{color:var(--err)}
+</style>
+</head>
+<body>
+<video id="v" playsinline muted></video>
+<div class="shade"><div class="frame" id="frame"><div class="laser"></div></div></div>
+
+<div class="top">
+  <h1><span>Scan</span> placards</h1>
+  <button id="torch" type="button" hidden>Lampe</button>
+</div>
+
+<div class="bottom">
+  <div class="msg" id="msg">Vise le code-barres dans le cadre.</div>
+  <div class="code" id="code" hidden></div>
+  <div class="row" id="actions" hidden>
+    <button class="big" id="send" type="button">Ajouter à l'inventaire</button>
+    <button id="again" type="button">Rescanner</button>
+  </div>
+  <a class="btn" id="open" href="https://claude.ai/artifact/C1f1r5pMxut8VdB6yaZ279">Voir l'inventaire</a>
+</div>
+
+<div class="start" id="start">
+  <h2><span>Scanner</span><br>placards</h2>
+  <p>Pointe la caméra sur une étiquette : le code-barres est repéré tout seul, bip, et il part dans ton inventaire.</p>
+  <button class="big" id="go" type="button">Démarrer la caméra</button>
+  <p id="startErr" class="err" hidden></p>
+</div>
+
+<script>
+const INVENTAIRE="https://claude.ai/artifact/C1f1r5pMxut8VdB6yaZ279";
+const AUTO_SEND=true;           // après le bip, ouvre directement l'inventaire
+const $=id=>document.getElementById(id);
+const v=$("v");
+let stream=null, track=null, detector=null, zx=null, running=false, last="", hits=0, current="", actx=null, timer=null;
+
+function hex(s){return [...new TextEncoder().encode(s)].map(b=>b.toString(16).padStart(2,"0")).join("")}
+function beep(){
+  try{actx??=new (window.AudioContext||window.webkitAudioContext)();
+    const o=actx.createOscillator(),g=actx.createGain();o.type="square";o.frequency.value=2700;
+    g.gain.setValueAtTime(.18,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+.14);
+    o.connect(g).connect(actx.destination);o.start();o.stop(actx.currentTime+.15)}catch{}
+  try{navigator.vibrate?.(80)}catch{}
+}
+function sendUrl(code){
+  const here=location.origin+location.pathname;
+  return INVENTAIRE+"#scan-"+hex(code)+"-from-"+hex(here);
+}
+
+/* zone du cadre de visée, en pixels de la vidéo */
+function frameRect(){
+  const fr=$("frame").getBoundingClientRect(), vw=v.videoWidth, vh=v.videoHeight;
+  const s=Math.max(innerWidth/vw,innerHeight/vh), ox=(vw*s-innerWidth)/2, oy=(vh*s-innerHeight)/2;
+  const m=0.25; // marge autour du cadre
+  const x=(fr.left+ox)/s-fr.width/s*m, y=(fr.top+oy)/s-fr.height/s*m;
+  return {x:Math.max(0,x),y:Math.max(0,y),w:Math.min(vw,fr.width/s*(1+2*m)),h:Math.min(vh,fr.height/s*(1+2*m))};
+}
+const cv=document.createElement("canvas"), cx=cv.getContext("2d",{willReadFrequently:true});
+
+async function tick(){
+  if(!running)return;
+  if(v.readyState>=2&&v.videoWidth){
+    const r=frameRect(); cv.width=Math.round(r.w); cv.height=Math.round(r.h);
+    cx.drawImage(v,r.x,r.y,r.w,r.h,0,0,cv.width,cv.height);
+    let val="";
+    try{
+      if(detector){const res=await detector.detect(cv);
+        if(res.length){const c=cv.width/2,cy=cv.height/2;
+          res.sort((a,b)=>Math.hypot(a.boundingBox.x+a.boundingBox.width/2-c,a.boundingBox.y+a.boundingBox.height/2-cy)-Math.hypot(b.boundingBox.x+b.boundingBox.width/2-c,b.boundingBox.y+b.boundingBox.height/2-cy));
+          val=res[0].rawValue}}
+      else if(zx){const lum=new ZXing.HTMLCanvasElementLuminanceSource(cv);const bmp=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));val=zx.decode(bmp).getText()}
+    }catch{}
+    if(val){ if(val===last)hits++; else {last=val;hits=1}
+      if(hits>=2){found(val);return} }
+  }
+  timer=setTimeout(tick,detector?90:160);
+}
+function found(val){
+  running=false;current=val;beep();
+  $("frame").classList.add("hit");
+  $("code").textContent=val;$("code").hidden=false;
+  if(AUTO_SEND){$("msg").textContent="Bip ! Ouverture de l'inventaire…";setTimeout(()=>{location.href=sendUrl(val)},450);$("actions").hidden=false;}
+  else{$("msg").textContent="Code lu.";$("actions").hidden=false}
+}
+function resume(){
+  $("frame").classList.remove("hit");$("code").hidden=true;$("actions").hidden=true;
+  $("msg").textContent="Vise le code-barres dans le cadre.";last="";hits=0;running=true;tick();
+}
+$("send").onclick=()=>{location.href=sendUrl(current)};
+$("again").onclick=resume;
+
+async function start(){
+  $("startErr").hidden=true;
+  try{actx??=new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch{}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
+  }catch(e){
+    $("startErr").textContent=e.name==="NotAllowedError"?"Accès à la caméra refusé. Autorise la caméra pour ce site dans les réglages du navigateur (cadenas à gauche de l'adresse), puis réessaie.":"Impossible d'ouvrir la caméra ("+e.name+"). Ouvre cette page dans Chrome.";
+    $("startErr").hidden=false;return;
+  }
+  v.srcObject=stream;await v.play().catch(()=>{});
+  track=stream.getVideoTracks()[0];
+  try{const caps=track.getCapabilities?.()||{};
+    if(caps.torch)$("torch").hidden=false;
+    if(caps.focusMode?.includes("continuous"))await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
+  }catch{}
+  if("BarcodeDetector" in window){try{detector=new BarcodeDetector()}catch{detector=null}}
+  if(!detector&&window.ZXing){const h=new Map();h.set(ZXing.DecodeHintType.TRY_HARDER,true);zx=new ZXing.MultiFormatReader();zx.setHints(h)}
+  if(!detector&&!zx){$("msg").textContent="Ce navigateur ne sait pas lire les codes-barres. Ouvre la page dans Chrome.";return}
+  $("start").hidden=true;running=true;tick();
+}
+let torchOn=false;
+$("torch").onclick=async()=>{try{torchOn=!torchOn;await track.applyConstraints({advanced:[{torch:torchOn}]});$("torch").textContent=torchOn?"Lampe : on":"Lampe"}catch{}};
+$("go").onclick=start;
+document.addEventListener("visibilitychange",()=>{if(document.hidden){running=false;clearTimeout(timer)}else if(stream&&$("start").hidden&&$("actions").hidden){running=true;tick()}});
+window.addEventListener("pageshow",e=>{if(e.persisted&&stream)resume()});
+</script>
+</body>
+</html>
