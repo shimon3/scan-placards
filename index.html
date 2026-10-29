@@ -70,6 +70,7 @@ button:focus-visible,a.btn:focus-visible{outline:2px solid var(--label);outline-
   <p>Pointe la caméra sur une étiquette : le code-barres est repéré tout seul, bip, et il part dans ton inventaire.</p>
   <button class="big" id="go" type="button">Démarrer la caméra</button>
   <p id="startErr" class="err" hidden></p>
+  <p id="startInfo" style="font-family:var(--mono);font-size:12px">version 3</p>
 </div>
 
 <script>
@@ -134,16 +135,19 @@ function resume(){
 $("send").onclick=()=>{location.href=sendUrl(current)};
 $("again").onclick=resume;
 
-async function start(){
-  $("startErr").hidden=true;
+async function start(){try{await startInner()}catch(e){showErr("Erreur au démarrage : "+(e&&(e.name||e.message)||e))}}
+function showErr(t){$("startErr").textContent=t;$("startErr").hidden=false;$("go").disabled=false;$("go").textContent="Réessayer"}
+async function startInner(){
+  $("startErr").hidden=true;$("go").disabled=true;$("go").textContent="Ouverture de la caméra…";
+  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){showErr("La caméra n'est pas accessible ici. Ouvre l'adresse https://… directement dans Chrome (pas dans une autre app).");return}
   try{actx??=new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch{}
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
   }catch(e){
     $("startErr").textContent=e.name==="NotAllowedError"?"Accès à la caméra refusé. Autorise la caméra pour ce site dans les réglages du navigateur (cadenas à gauche de l'adresse), puis réessaie.":"Impossible d'ouvrir la caméra ("+e.name+"). Ouvre cette page dans Chrome.";
-    $("startErr").hidden=false;return;
+    $("startErr").hidden=false;$("go").disabled=false;$("go").textContent="Réessayer";return;
   }
-  v.srcObject=stream;await v.play().catch(()=>{});
+  v.srcObject=stream;v.play().catch(()=>{});
   track=stream.getVideoTracks()[0];
   try{const caps=track.getCapabilities?.()||{};
     if(caps.torch)$("torch").hidden=false;
@@ -151,7 +155,7 @@ async function start(){
   }catch{}
   if("BarcodeDetector" in window){try{detector=new BarcodeDetector()}catch{detector=null}}
   if(!detector&&window.ZXing){const h=new Map();h.set(ZXing.DecodeHintType.TRY_HARDER,true);zx=new ZXing.MultiFormatReader();zx.setHints(h)}
-  if(!detector&&!zx){$("msg").textContent="Ce navigateur ne sait pas lire les codes-barres. Ouvre la page dans Chrome.";return}
+  if(!detector&&!zx){$("start").hidden=true;$("msg").textContent="Ce navigateur ne sait pas lire les codes-barres. Ouvre la page dans Chrome.";return}
   $("start").hidden=true;running=true;tick();
 }
 let torchOn=false;
