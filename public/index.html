@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#15191e">
+<title>Inventaire des placards</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+/* Une colonne de fiches regroupées par placard ; scanner plein écran ; fiche en panneau du bas */
+:root{
+  --bg:#eef0f2; --panel:#ffffff; --ink:#15191e; --muted:#5d6670; --line:#d5dade;
+  --label:#f2b632; --label-ink:#1d1606; --steel:#2e4a62; --danger:#b3261e; --ok:#2f7d4a;
+  --display:"Archivo",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#12161a; --panel:#1b2127; --ink:#e8ebee; --muted:#9aa4ad; --line:#2c343c;
+  --label:#e8ab2a; --steel:#8db3d4; --danger:#f0857d; --ok:#7cc796; color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--display);font-size:15px;line-height:1.45;padding-top:env(safe-area-inset-top,0px)}
+.wrap{max-width:860px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 130px;display:flex;flex-direction:column;gap:18px}
+header{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px}
+h1{font-stretch:72%;font-weight:800;font-size:clamp(28px,7vw,40px);line-height:1;margin:0;text-transform:uppercase;letter-spacing:.01em}
+h1 span{display:inline-block;background:var(--label);color:var(--label-ink);padding:2px 8px;transform:rotate(-1.5deg)}
+.sub{color:var(--muted);margin:6px 0 0;font-size:14px}
+.stats{display:flex;gap:18px;font-family:var(--mono);font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.stats b{display:block;font-stretch:80%;font-size:24px;color:var(--ink);font-family:var(--display);font-variant-numeric:tabular-nums;letter-spacing:0}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+input,select,textarea,button{font:inherit;color:inherit}
+input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 10px;width:100%;min-width:0}
+textarea{resize:vertical;min-height:54px}
+:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+.tools input{flex:1 1 200px;width:auto}.tools select{flex:0 1 180px;width:auto}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:9px 14px;font-weight:600}
+button:hover{border-color:var(--steel)}
+button:disabled{opacity:.5;cursor:default}
+.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.scanbtn{background:var(--label);color:var(--label-ink);border:none;font-stretch:80%;font-weight:800;font-size:19px;text-transform:uppercase;letter-spacing:.04em;padding:15px 24px;border-radius:999px;box-shadow:0 6px 18px rgb(0 0 0 / .25);display:flex;align-items:center;gap:10px}
+.dock{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:10px;padding:12px max(16px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));pointer-events:none;z-index:5}
+.dock>*{pointer-events:auto}
+.dock .ghost{border-radius:999px;box-shadow:0 6px 18px rgb(0 0 0 / .18)}
+.notice{border:1px solid var(--danger);border-radius:8px;padding:10px 14px;font-size:14px;background:var(--panel)}
+.group h2{font-family:var(--mono);font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0 0 8px;display:flex;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:4px}
+.list{display:grid;gap:8px}
+.item{display:grid;grid-template-columns:64px 1fr auto;gap:12px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+.thumb{width:64px;height:64px;border-radius:5px;background:var(--bg);object-fit:cover;display:grid;place-items:center;font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;overflow:hidden}
+.meta{min-width:0}
+.name{font-weight:700;font-size:16px;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;font-size:12px}
+.chip{border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:var(--muted)}
+.chip.cat{background:var(--steel);border-color:var(--steel);color:var(--panel)}
+.chip.bad{color:var(--danger);border-color:var(--danger)}
+.small{font-family:var(--mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}
+.small.txt{font-family:var(--display)}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.qty{display:flex;align-items:center;gap:4px;font-variant-numeric:tabular-nums}
+.qty button{padding:4px 10px}
+.qty output{min-width:28px;text-align:center;font-stretch:80%;font-weight:800;font-size:20px}
+.link{font-size:12px;padding:3px 8px;border-color:transparent;background:none}
+.link.edit{color:var(--steel)}.link.del{color:var(--danger)}
+.link.arm{border-color:var(--danger)}
+.empty{text-align:center;padding:40px 16px;border:2px dashed var(--line);border-radius:10px;color:var(--muted)}
+.empty strong{display:block;font-stretch:80%;font-size:22px;color:var(--ink);margin-bottom:6px;text-transform:uppercase}
+/* login */
+.login{min-height:80vh;display:flex;flex-direction:column;justify-content:center;gap:16px;max-width:360px;margin:0 auto;padding-inline:16px}
+.login form{display:flex;flex-direction:column;gap:10px}
+/* sheet */
+.sheet{position:fixed;inset:0;background:rgb(0 0 0 / .45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.card{background:var(--bg);width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:14px 14px 0 0;padding:18px max(16px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px}
+@media (min-width:640px){.sheet{align-items:center}.card{border-radius:14px}}
+.card h3{margin:0;font-stretch:80%;font-size:22px;text-transform:uppercase}
+.shot{display:flex;gap:12px;align-items:center}
+.shot img{width:84px;height:84px;object-fit:cover;border-radius:6px;background:var(--panel);flex:none}
+.status{font-size:14px;color:var(--muted)}
+.status.ok{color:var(--ok)}.status.err{color:var(--danger)}
+.dup{border:1px solid var(--label);background:var(--panel);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid .full{grid-column:1/-1}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);min-width:0}
+label input,label select,label textarea{font-family:var(--display);text-transform:none;letter-spacing:0;font-size:15px;color:var(--ink)}
+.mono{font-family:var(--mono)!important}
+.actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:r .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes r{to{transform:rotate(360deg)}}
+@media (max-width:440px){.grid{grid-template-columns:1fr}.item{grid-template-columns:52px 1fr auto}.thumb{width:52px;height:52px}}
+/* scanner */
+.scanner{position:fixed;inset:0;background:#000;z-index:30;color:#eef1f3}
+.scanner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.frame{position:absolute;left:50%;top:42%;width:min(86vw,440px);height:min(56vw,280px);transform:translate(-50%,-50%);box-shadow:0 0 0 100vmax rgb(0 0 0 / .55);border-radius:10px;pointer-events:none}
+.frame::before{content:"";position:absolute;inset:-3px;border:3px solid #f2b632;border-radius:12px}
+.laser{position:absolute;left:6%;right:6%;top:50%;height:2px;background:#f0857d;box-shadow:0 0 12px #f0857d;animation:l 1.6s ease-in-out infinite alternate}
+@keyframes l{from{top:18%}to{top:82%}}
+@media (prefers-reduced-motion:reduce){.laser,.spin{animation:none}}
+.scanner .top{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:calc(12px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px))}
+.scanner .bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));background:linear-gradient(transparent,rgb(0 0 0 / .8) 30%)}
+.scanner button{background:rgb(17 20 23 / .7);color:#eef1f3;border:1px solid rgb(255 255 255 / .25);border-radius:999px}
+.scanner .msg{font-size:15px;color:#c4ccd3;max-width:36ch}
+.zoom{display:flex;align-items:center;gap:10px;width:min(100%,360px);font-family:var(--mono);font-size:13px;color:#c4ccd3}
+.zoom input{flex:1;accent-color:#f2b632;padding:0;background:none;border:none}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<!-- Connexion -->
+<section class="login" id="loginView" hidden>
+  <h1><span>Inventaire</span><br>des placards</h1>
+  <form id="loginForm">
+    <label>Mot de passe<input id="pw" type="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Entrer</button>
+    <div class="status err" id="loginErr"></div>
+  </form>
+</section>
+
+<!-- Application -->
+<div class="wrap" id="appView" hidden>
+  <header>
+    <div>
+      <h1><span>Inventaire</span> des placards</h1>
+      <p class="sub">Vise une étiquette : bip, Claude lit la marque, le modèle, la taille et le n° de série.</p>
+    </div>
+    <div class="stats"><div><b id="stItems">0</b>fiches</div><div><b id="stQty">0</b>pièces</div><div><b id="stPl">0</b>placards</div></div>
+  </header>
+  <div class="notice" id="notice" hidden></div>
+  <div class="tools">
+    <input id="q" type="search" placeholder="Chercher : nom, modèle, n° de série, placard…" aria-label="Recherche">
+    <select id="fCat" aria-label="Catégorie"><option value="">Toutes catégories</option></select>
+    <select id="fPl" aria-label="Placard"><option value="">Tous les placards</option></select>
+    <button id="btnCsv" type="button">Exporter CSV</button>
+  </div>
+  <div id="out"><div class="empty"><strong>Chargement…</strong></div></div>
+</div>
+
+<div class="dock" id="dock" hidden>
+  <button class="scanbtn" id="btnScan" type="button">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M7 12h10"/></svg>
+    Scanner
+  </button>
+  <button class="ghost" id="btnManual" type="button">Saisie manuelle</button>
+</div>
+
+<!-- Scanner plein écran -->
+<div class="scanner" id="scanner" hidden>
+  <video id="v" playsinline muted></video>
+  <div class="frame"><div class="laser"></div></div>
+  <div class="top">
+    <button id="scClose" type="button">✕ Fermer</button>
+    <div class="row"><button id="scCam" type="button" hidden>Caméra</button><button id="scTorch" type="button" hidden>Lampe</button></div>
+  </div>
+  <div class="bottom">
+    <div class="msg" id="scMsg">Vise le code-barres dans le cadre, à 20 cm environ.</div>
+    <div class="zoom" id="zoomBox" hidden><span>Zoom</span><input id="zoom" type="range" aria-label="Zoom"><span id="zoomVal">1×</span></div>
+    <button id="scNoCode" type="button">Pas de code-barres : prendre la photo</button>
+  </div>
+</div>
+
+<!-- Fiche -->
+<div class="sheet" id="sheet" hidden>
+  <form class="card" id="form" autocomplete="off">
+    <h3 id="formTitle">Nouvel équipement</h3>
+    <div class="shot" id="shotRow" hidden>
+      <img id="shotImg" alt="Photo de l'étiquette">
+      <div class="status" id="scanStatus"></div>
+    </div>
+    <div class="dup" id="dupBox" hidden></div>
+    <div class="grid">
+      <label class="full">Nom<input id="fName" required placeholder="ex. Écran Samsung S27C310EAM 27&quot;"></label>
+      <label>Catégorie<select id="fCatIn"></select></label>
+      <label>Placard<input id="fPlace" list="placesList" required placeholder="ex. Etage 17"></label>
+      <label>Marque<input id="fBrand" placeholder="ex. Samsung"></label>
+      <label>Modèle<input id="fModel" class="mono" placeholder="ex. S27C310EAM"></label>
+      <label>Taille<input id="fSize" placeholder="ex. 27 pouces"></label>
+      <label>N° de série<input id="fSerial" class="mono" placeholder="lu sur l'étiquette"></label>
+      <label>Quantité<input id="fQty" type="number" min="0" value="1" inputmode="numeric"></label>
+      <label>État<select id="fState"><option>Neuf</option><option selected>Bon</option><option>Usé</option><option>En panne</option></select></label>
+      <label class="full">Code-barres scanné<input id="fCode" class="mono"></label>
+      <label class="full">Note<textarea id="fNote" placeholder="câbles fournis, propriétaire, etc."></textarea></label>
+    </div>
+    <datalist id="placesList"></datalist>
+    <div class="actions">
+      <button type="button" id="btnPhoto">Photo de l'étiquette</button>
+      <button type="button" id="btnCancel">Annuler</button>
+      <button type="submit" class="primary" id="btnSave">Enregistrer</button>
+    </div>
+    <div class="status" id="saveStatus"></div>
+  </form>
+</div>
+<input id="file" type="file" accept="image/*" capture="environment" hidden>
+
+<script>
+const CATS=["Écran","Télévision","Imprimante","Ordinateur / portable","Clavier / souris","Câble / adaptateur","Réseau (switch, routeur)","Téléphone / casque","Consommable (encre, papier)","Autre"];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ls={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
+let items=[], editing=null, photoData="", recCtl=null;
+CATS.forEach(c=>{$("fCat").add(new Option(c,c));$("fCatIn").add(new Option(c,c))});
+
+/* ================= API ================= */
+async function api(path,opts={}){
+  const r=await fetch(path,{credentials:"same-origin",headers:{"content-type":"application/json"},...opts});
+  if(r.status===401){showLogin();throw Object.assign(new Error("Connexion requise"),{code:"auth"})}
+  let data={};try{data=await r.json()}catch{}
+  if(!r.ok)throw Object.assign(new Error(data.message||data.error||("Erreur "+r.status)),{code:data.error,status:r.status});
+  return data;
+}
+function notice(t){$("notice").hidden=!t;$("notice").textContent=t||""}
+
+/* ================= Connexion ================= */
+function showLogin(){$("appView").hidden=true;$("dock").hidden=true;$("loginView").hidden=false;$("pw").focus()}
+function showApp(){$("loginView").hidden=true;$("appView").hidden=false;$("dock").hidden=false}
+$("loginForm").addEventListener("submit",async e=>{
+  e.preventDefault();$("loginErr").textContent="";
+  try{await api("/api/login",{method:"POST",body:JSON.stringify({password:$("pw").value})});$("pw").value="";await load()}
+  catch(err){$("loginErr").textContent=err.code==="bad_password"?"Mot de passe incorrect.":err.message}
+});
+
+/* ================= Liste ================= */
+async function load(){
+  try{const d=await api("/api/items");items=d.items||[];showApp();notice("");render()}
+  catch(err){if(err.code!=="auth"){showApp();notice("Impossible de charger la liste : "+err.message)}}
+}
+function render(){
+  const q=$("q").value.trim().toLowerCase(), fc=$("fCat").value;
+  const places=[...new Set(items.map(i=>i.placard||"Sans placard"))].sort((a,b)=>a.localeCompare(b,"fr",{numeric:true}));
+  const cur=$("fPl").value;$("fPl").length=1;places.forEach(p=>$("fPl").add(new Option(p,p)));$("fPl").value=places.includes(cur)?cur:"";
+  const fp=$("fPl").value;
+  $("placesList").innerHTML=places.map(p=>`<option value="${esc(p)}">`).join("");
+  $("stItems").textContent=items.length;$("stQty").textContent=items.reduce((s,i)=>s+(+i.qte||0),0);$("stPl").textContent=places.length;
+  const vis=items.filter(i=>(!fc||i.cat===fc)&&(!fp||(i.placard||"Sans placard")===fp)&&(!q||[i.nom,i.code,i.placard,i.note,i.cat,i.marque,i.modele,i.serie,i.taille].join(" ").toLowerCase().includes(q)));
+  if(!items.length){$("out").innerHTML=`<div class="empty"><strong>Placards vides pour l'instant</strong>Appuie sur <b>Scanner</b> et vise l'étiquette du premier équipement.</div>`;return}
+  if(!vis.length){$("out").innerHTML=`<div class="empty"><strong>Rien ne correspond</strong>Change la recherche ou les filtres.</div>`;return}
+  const by={};vis.forEach(i=>(by[i.placard||"Sans placard"]??=[]).push(i));
+  $("out").innerHTML=Object.keys(by).sort((a,b)=>a.localeCompare(b,"fr",{numeric:true})).map(p=>{
+    const g=by[p];
+    return `<section class="group"><h2><span>${esc(p)}</span><span>${g.reduce((s,i)=>s+(+i.qte||0),0)} pièces</span></h2><div class="list">${g.map(i=>`
+      <article class="item" data-id="${esc(i.id)}">
+        ${i.photo?`<img class="thumb" src="${esc(i.photo)}" alt="">`:`<div class="thumb">${esc((i.cat||"?").split(" ")[0])}</div>`}
+        <div class="meta">
+          <div class="name">${esc(i.nom)}</div>
+          <div class="chips"><span class="chip cat">${esc(i.cat||"Autre")}</span><span class="chip ${i.etat==="En panne"?"bad":""}">${esc(i.etat||"Bon")}</span>${i.taille?`<span class="chip">${esc(i.taille)}</span>`:""}</div>
+          ${(i.marque||i.modele)?`<div class="small txt">${esc([i.marque,i.modele].filter(Boolean).join(" · "))}</div>`:""}
+          ${i.serie?`<div class="small">S/N ${esc(i.serie)}</div>`:""}
+          ${i.note?`<div class="small txt">${esc(i.note)}</div>`:""}
+        </div>
+        <div class="side">
+          <div class="qty"><button type="button" data-a="dec" aria-label="Retirer un">−</button><output>${+i.qte||0}</output><button type="button" data-a="inc" aria-label="Ajouter un">+</button></div>
+          <div><button type="button" class="link edit" data-a="edit">Modifier</button><button type="button" class="link del" data-a="del">Supprimer</button></div>
+        </div>
+      </article>`).join("")}</div></section>`}).join("");
+}
+["q","fCat","fPl"].forEach(id=>$(id).addEventListener("input",render));
+$("out").addEventListener("click",async e=>{
+  const b=e.target.closest("button[data-a]");if(!b)return;
+  const id=b.closest(".item").dataset.id, it=items.find(x=>x.id===id);if(!it)return;
+  try{
+    if(b.dataset.a==="inc"||b.dataset.a==="dec"){const d=await api("/api/items/"+id,{method:"PATCH",body:JSON.stringify({delta:b.dataset.a==="inc"?1:-1})});it.qte=d.qte;render()}
+    if(b.dataset.a==="edit")openForm(it);
+    if(b.dataset.a==="del"){
+      if(!b.classList.contains("arm")){b.classList.add("arm");b.textContent="Confirmer ?";setTimeout(()=>{b.classList.remove("arm");b.textContent="Supprimer"},3000);return}
+      await api("/api/items/"+id,{method:"DELETE"});items=items.filter(x=>x.id!==id);render();
+    }
+  }catch(err){if(err.code!=="auth")notice("Modification refusée : "+err.message)}
+});
+
+/* ================= Fiche ================= */
+const F={nom:"fName",cat:"fCatIn",placard:"fPlace",marque:"fBrand",modele:"fModel",taille:"fSize",serie:"fSerial",qte:"fQty",etat:"fState",code:"fCode",note:"fNote"};
+function openForm(it){
+  recCtl?.abort();
+  editing=it||null;photoData=it?.photo||"";
+  $("formTitle").textContent=it?"Modifier":"Nouvel équipement";
+  for(const [k,id] of Object.entries(F))$(id).value=it?.[k]??"";
+  if(!it){$("fCatIn").value="Écran";$("fQty").value=1;$("fState").value="Bon";$("fPlace").value=$("fPl").value||ls.get("lastPlace")||""}
+  $("shotRow").hidden=!photoData;$("shotImg").src=photoData||"";$("scanStatus").textContent="";
+  $("dupBox").hidden=true;$("saveStatus").textContent="";$("sheet").hidden=false;
+}
+function closeForm(){recCtl?.abort();$("sheet").hidden=true;editing=null}
+$("btnCancel").onclick=closeForm;
+$("sheet").addEventListener("click",e=>{if(e.target===$("sheet"))closeForm()});
+$("btnManual").onclick=()=>openForm();
+$("btnPhoto").onclick=()=>{$("file").value="";$("file").click()};
+$("form").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const data={photo:photoData};for(const [k,id] of Object.entries(F))data[k]=$(id).value;
+  $("btnSave").disabled=true;$("saveStatus").className="status";$("saveStatus").textContent="Enregistrement…";
+  try{
+    if(editing){const d=await api("/api/items/"+editing.id,{method:"PUT",body:JSON.stringify(data)});Object.assign(editing,d.item)}
+    else{const d=await api("/api/items",{method:"POST",body:JSON.stringify(data)});items.push(d.item)}
+    ls.set("lastPlace",data.placard.trim());closeForm();render();
+  }catch(err){$("saveStatus").className="status err";$("saveStatus").textContent="Échec de l'enregistrement : "+err.message}
+  finally{$("btnSave").disabled=false}
+});
+
+/* ================= Photo & reconnaissance par Claude ================= */
+function shrinkTo(src,max){const w=src.videoWidth||src.naturalWidth||src.width,h=src.videoHeight||src.naturalHeight||src.height,s=Math.min(1,max/Math.max(w,h));const c=document.createElement("canvas");c.width=Math.round(w*s);c.height=Math.round(h*s);c.getContext("2d").drawImage(src,0,0,c.width,c.height);return c}
+function toB64(canvas){return new Promise(ok=>canvas.toBlob(b=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(",")[1]);r.readAsDataURL(b)},"image/jpeg",.88))}
+async function recognize(src){
+  photoData=shrinkTo(src,240).toDataURL("image/jpeg",.7);
+  $("shotRow").hidden=false;$("shotImg").src=photoData;
+  const st=$("scanStatus");st.className="status";st.innerHTML='<span class="spin"></span>Claude lit l\'étiquette…';
+  recCtl?.abort();recCtl=new AbortController();
+  try{
+    const image=await toB64(shrinkTo(src,2000));
+    const r=await api("/api/recognize",{method:"POST",body:JSON.stringify({image,codes:$("fCode").value}),signal:recCtl.signal});
+    const fill=(id,v)=>{if(v&&!$(id).value.trim())$(id).value=String(v)};
+    fill("fName",r.nom);fill("fBrand",r.marque);fill("fModel",r.modele);fill("fSize",r.taille);fill("fSerial",r.numero_serie);fill("fNote",r.note);
+    if(CATS.includes(r.categorie))$("fCatIn").value=r.categorie;
+    if(r.quantite>1)$("fQty").value=r.quantite;
+    const got=[r.marque&&"marque",r.modele&&"modèle",r.taille&&"taille",r.numero_serie&&"n° de série"].filter(Boolean);
+    st.className="status ok";st.textContent="Objet reconnu"+(got.length?" ("+got.join(", ")+")":"")+". Vérifie, puis enregistre.";
+  }catch(err){
+    if(err.name==="AbortError")return;
+    st.className="status err";
+    st.textContent=err.code==="no_key"?"Reconnaissance désactivée : ajoute la clé ANTHROPIC_API_KEY dans Cloudflare. Tu peux remplir la fiche à la main."
+      :"Reconnaissance impossible ("+err.message+"). Reprends une photo nette de l'étiquette, ou remplis à la main.";
+  }
+}
+$("file").addEventListener("change",async()=>{
+  const f=$("file").files[0];if(!f)return;
+  if($("sheet").hidden)openForm(editing);
+  const url=URL.createObjectURL(f);
+  try{
+    const im=await new Promise((ok,ko)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=ko;i.src=url});
+    if(!$("fCode").value){const c=await decodeStill(im);if(c)$("fCode").value=c}
+    await recognize(im);
+  }finally{URL.revokeObjectURL(url)}
+});
+
+/* ================= Doublons ================= */
+function checkDup(code){
+  const dup=items.find(i=>i.code&&i.code===code);if(!dup)return false;
+  $("dupBox").hidden=false;
+  $("dupBox").innerHTML=`<div>Déjà dans l'inventaire : <b>${esc(dup.nom)}</b> (${esc(dup.placard||"Sans placard")}, quantité ${+dup.qte||0}).</div>
+    <div class="actions" style="justify-content:flex-start"><button type="button" class="primary" id="dupAdd">Ajouter 1 à cette fiche</button><button type="button" id="dupNew">Créer une nouvelle fiche</button></div>`;
+  $("dupAdd").onclick=async()=>{try{const d=await api("/api/items/"+dup.id,{method:"PATCH",body:JSON.stringify({delta:1})});dup.qte=d.qte;closeForm();render()}catch(e){$("saveStatus").className="status err";$("saveStatus").textContent="Échec : "+e.message}};
+  return true;
+}
+
+/* ================= Scanner en direct ================= */
+const v=$("v");
+let stream=null,track=null,detector=null,zx=null,running=false,timer=null,last="",hits=0,flip=false,torchOn=false,backCams=[],actx=null,dupPending=null;
+const cv=document.createElement("canvas"),cx=cv.getContext("2d",{willReadFrequently:true});
+const zcv=document.createElement("canvas"),zcx=zcv.getContext("2d",{willReadFrequently:true});
+
+function beep(){
+  try{actx??=new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.type="square";o.frequency.value=2700;
+    g.gain.setValueAtTime(.18,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+.14);o.connect(g).connect(actx.destination);o.start();o.stop(actx.currentTime+.15)}catch{}
+  try{navigator.vibrate?.(80)}catch{}
+}
+async function initReaders(){
+  if(detector||zx)return;
+  if("BarcodeDetector" in window){try{const f=await BarcodeDetector.getSupportedFormats();if(f?.length)detector=new BarcodeDetector({formats:f})}catch{}}
+  if(window.ZXing){try{const h=new Map();h.set(ZXing.DecodeHintType.TRY_HARDER,true);const B=ZXing.BarcodeFormat;
+    h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[B.CODE_128,B.CODE_39,B.CODE_93,B.EAN_13,B.EAN_8,B.UPC_A,B.UPC_E,B.ITF,B.CODABAR,B.QR_CODE,B.DATA_MATRIX]);
+    zx=new ZXing.MultiFormatReader();zx.setHints(h)}catch{}}
+}
+function zxRead(src){
+  const k=Math.min(1,1400/src.width);zcv.width=Math.round(src.width*k);zcv.height=Math.round(src.height*k);zcx.drawImage(src,0,0,zcv.width,zcv.height);
+  try{return zx.decodeWithState(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(zcv)))).getText()}catch{return ""}
+}
+async function decodeStill(im){
+  await initReaders();
+  const c=shrinkTo(im,2400);
+  if(detector){try{const r=await detector.detect(c);if(r.length)return r[0].rawValue}catch{}}
+  return zx?zxRead(c):"";
+}
+function frameRect(){
+  const fr=document.querySelector(".frame").getBoundingClientRect(),vw=v.videoWidth,vh=v.videoHeight;
+  const s=Math.max(innerWidth/vw,innerHeight/vh),ox=(vw*s-innerWidth)/2,oy=(vh*s-innerHeight)/2,m=.15;
+  return{x:Math.max(0,(fr.left+ox)/s-fr.width/s*m),y:Math.max(0,(fr.top+oy)/s-fr.height/s*m),w:Math.min(vw,fr.width/s*(1+2*m)),h:Math.min(vh,fr.height/s*(1+2*m))};
+}
+let n=0;
+async function tick(){
+  if(!running)return;
+  if(v.readyState>=2&&v.videoWidth){
+    n++;flip=!flip;
+    const r=flip?frameRect():{x:0,y:0,w:v.videoWidth,h:v.videoHeight};cv.width=Math.round(r.w);cv.height=Math.round(r.h);
+    cx.drawImage(v,r.x,r.y,r.w,r.h,0,0,cv.width,cv.height);
+    let val="";
+    if(detector){try{const res=await detector.detect(cv);if(res.length){const c=cv.width/2,cy=cv.height/2;
+      res.sort((a,b)=>Math.hypot(a.boundingBox.x+a.boundingBox.width/2-c,a.boundingBox.y+a.boundingBox.height/2-cy)-Math.hypot(b.boundingBox.x+b.boundingBox.width/2-c,b.boundingBox.y+b.boundingBox.height/2-cy));val=res[0].rawValue}}catch{}}
+    if(!val&&zx&&flip&&(!detector||n%3===1))val=zxRead(cv);
+    if(val){if(val===last)hits++;else{last=val;hits=1}
+      if(hits>=2){onCode(val);return}}
+  }
+  timer=setTimeout(tick,detector?80:150);
+}
+function grabFrame(){const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;c.getContext("2d").drawImage(v,0,0);return c}
+function onCode(code){
+  running=false;beep();
+  const shot=grabFrame();
+  closeScanner();
+  openForm();$("fCode").value=code;
+  if(!checkDup(code))recognize(shot);
+  else{$("shotRow").hidden=false;photoData=shrinkTo(shot,240).toDataURL("image/jpeg",.7);$("shotImg").src=photoData;
+    $("scanStatus").className="status ok";$("scanStatus").textContent="Bip ! Code "+code;
+    $("dupNew").onclick=()=>{$("dupBox").hidden=true;recognize(shot)}}
+}
+async function openCam(deviceId){
+  stream?.getTracks().forEach(t=>t.stop());
+  const base={width:{ideal:2560},height:{ideal:1440}};
+  try{stream=await navigator.mediaDevices.getUserMedia({video:deviceId?{...base,deviceId:{exact:deviceId}}:{...base,facingMode:{ideal:"environment"}},audio:false})}
+  catch(e){if(!deviceId)throw e;stream=await navigator.mediaDevices.getUserMedia({video:{...base,facingMode:{ideal:"environment"}},audio:false})}
+  v.srcObject=stream;v.play().catch(()=>{});
+  track=stream.getVideoTracks()[0];torchOn=false;$("scTorch").textContent="Lampe";
+  try{const caps=track.getCapabilities?.()||{};
+    $("scTorch").hidden=!caps.torch;
+    if(caps.zoom&&caps.zoom.max>caps.zoom.min){const z=$("zoom");z.min=caps.zoom.min;z.max=Math.min(caps.zoom.max,8);z.step=caps.zoom.step||.1;
+      const st=+(ls.get("zoom")||Math.min(2,+z.max));z.value=st;$("zoomBox").hidden=false;
+      const setZ=async val=>{try{await track.applyConstraints({advanced:[{zoom:+val}]});$("zoomVal").textContent=(+val).toFixed(1)+"×";ls.set("zoom",val)}catch{}};
+      setZ(st);z.oninput=()=>setZ(z.value)}else $("zoomBox").hidden=true;
+    if(caps.focusMode?.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{});
+  }catch{}
+}
+function camLabel(){const id=track?.getSettings?.().deviceId,i=backCams.findIndex(d=>d.deviceId===id);$("scCam").textContent="Caméra "+(i+1)+"/"+backCams.length}
+async function openScanner(){
+  $("scanner").hidden=false;$("scMsg").textContent="Ouverture de la caméra…";
+  try{actx??=new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch{}
+  if(!navigator.mediaDevices?.getUserMedia){$("scMsg").textContent="Caméra indisponible : ouvre le site dans Chrome, en https.";return}
+  try{
+    await openCam(ls.get("camId"));
+    if(!backCams.length){
+      const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+      const back=devs.filter(d=>/back|arri|rear|environment/i.test(d.label));backCams=back.length?back:devs;
+      if(!ls.get("camId")){const main=backCams.find(d=>/\b0\b/.test(d.label));if(main&&main.deviceId!==track.getSettings?.().deviceId)await openCam(main.deviceId)}
+    }
+    if(backCams.length>1){$("scCam").hidden=false;camLabel()}
+  }catch(e){
+    $("scMsg").textContent=e.name==="NotAllowedError"?"Accès à la caméra refusé. Autorise-la via le cadenas à gauche de l'adresse, puis réessaie.":"Impossible d'ouvrir la caméra ("+e.name+").";return;
+  }
+  await initReaders();
+  if(!detector&&!zx){$("scMsg").textContent="Ce navigateur ne lit pas les codes-barres. Utilise Chrome.";return}
+  $("scMsg").textContent="Vise le code-barres dans le cadre, à 20 cm environ. Touche l'image pour refaire la mise au point.";
+  last="";hits=0;running=true;tick();
+}
+function closeScanner(){running=false;clearTimeout(timer);stream?.getTracks().forEach(t=>t.stop());stream=null;$("scanner").hidden=true}
+$("btnScan").onclick=openScanner;
+$("scClose").onclick=closeScanner;
+$("scNoCode").onclick=()=>{if(!stream)return;const shot=grabFrame();closeScanner();openForm();recognize(shot)};
+$("scCam").onclick=async()=>{if(backCams.length<2)return;const id=track?.getSettings?.().deviceId,i=backCams.findIndex(d=>d.deviceId===id),nx=backCams[(i+1)%backCams.length];
+  try{await openCam(nx.deviceId);ls.set("camId",nx.deviceId);camLabel()}catch{}};
+$("scTorch").onclick=async()=>{try{torchOn=!torchOn;await track.applyConstraints({advanced:[{torch:torchOn}]});$("scTorch").textContent=torchOn?"Lampe : on":"Lampe"}catch{}};
+v.addEventListener("click",()=>{try{const c=track.getCapabilities?.()||{};if(c.focusMode?.includes("single-shot")){track.applyConstraints({advanced:[{focusMode:"single-shot"}]}).then(()=>setTimeout(()=>{if(c.focusMode.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{})},1500)).catch(()=>{})}}catch{}});
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&!$("scanner").hidden)closeScanner()});
+
+/* ================= Export CSV ================= */
+$("btnCsv").onclick=()=>{
+  const rows=[["Placard","Nom","Catégorie","Marque","Modèle","Taille","N° de série","Code-barres","Quantité","État","Note"],
+    ...items.map(i=>[i.placard,i.nom,i.cat,i.marque,i.modele,i.taille,i.serie,i.code,i.qte,i.etat,i.note])];
+  const csv="﻿"+rows.map(r=>r.map(x=>`"${String(x??"").replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  a.download="inventaire-placards-"+new Date().toISOString().slice(0,10)+".csv";document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+};
+
+load();
+</script>
+</body>
+</html>
